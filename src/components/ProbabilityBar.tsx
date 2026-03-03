@@ -13,7 +13,7 @@ const ProbabilityBar = ({ label, value, rank }: ProbabilityBarProps) => (
       <motion.div
         className="gradient-bar absolute inset-y-0 left-0"
         initial={{ width: 0 }}
-        animate={{ width: `${value}%` }}
+        animate={{ width: `${value.toFixed(2)}%` }}
         transition={{ duration: 1.2, delay: rank * 0.2, ease: "easeOut" }}
         style={{
           opacity: rank === 0 ? 1 : 0.4 + (1 - rank * 0.15),
@@ -21,7 +21,7 @@ const ProbabilityBar = ({ label, value, rank }: ProbabilityBarProps) => (
       />
     </div>
     <span className="w-16 text-right font-display text-sm font-bold text-foreground">
-      {value}%
+      {value.toFixed(2)}%
     </span>
   </div>
 );

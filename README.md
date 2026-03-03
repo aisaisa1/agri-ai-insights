@@ -34,6 +34,18 @@ npm i
 
 # Step 4: Start the development server with auto-reloading and an instant preview.
 npm run dev
+
+> **Backend**
+>
+> This project includes a FastAPI backend that loads the trained model from `backend/saved_models` and exposes `/api/predict`.
+> Run it in a separate terminal:
+>
+> ```sh
+> cd backend
+> python -m uvicorn main:app --reload --port 8000
+> ```
+>
+> The frontend dev server is configured to proxy `/api` requests to `http://localhost:8000`.  
 ```
 
 **Edit a file directly in GitHub**

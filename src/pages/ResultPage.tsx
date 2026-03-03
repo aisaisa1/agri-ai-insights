@@ -1,33 +1,63 @@
 import { motion } from "framer-motion";
 import { useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { Brain, Leaf } from "lucide-react";
 import ConfidenceRing from "@/components/ConfidenceRing";
 import ProbabilityBar from "@/components/ProbabilityBar";
 
-const mockResult = {
-  crop: "Papaya",
-  confidence: 98.7,
-  topCrops: [
-    { name: "Papaya", prob: 98.7 },
-    { name: "Mango", prob: 1.2 },
-    { name: "Coconut", prob: 0.1 },
-  ],
-  explanation:
-    "Recommendation of **Papaya** is primarily driven by **Humidity** and **Temperature**. The high moisture content (82%) combined with warm temperatures (28°C) creates optimal conditions. **Nitrogen** levels further support this recommendation, while **pH** (6.5) falls within the ideal acidic-to-neutral range for Papaya cultivation.",
-  shapFeatures: [
-    { feature: "Humidity", value: 0.42, positive: true },
-    { feature: "Temperature", value: 0.31, positive: true },
-    { feature: "Nitrogen", value: 0.18, positive: true },
-    { feature: "pH", value: 0.05, positive: true },
-    { feature: "Potassium", value: -0.03, positive: false },
-    { feature: "Phosphorus", value: -0.02, positive: false },
-    { feature: "Rainfall", value: 0.09, positive: true },
-  ],
+// -----------------------------------------------------------------------------
+// Types for API response
+// -----------------------------------------------------------------------------
+interface ApiTopProbability {
+  crop: string;
+  probability: number; // 0..1
+}
+
+interface ApiShapValue {
+  feature: string;
+  display_name: string;
+  value: number;
+  scaled_value: number;
+  contribution: number;
+}
+
+interface ApiPrediction {
+  predicted_crop: string;
+  confidence: number; // 0..1
+  top_3_probabilities: ApiTopProbability[];
+  shap_values: ApiShapValue[];
+  base_value: number;
+  explanation_text: string;
+}
+
+// Front‑end-friendly result shape (values scaled as percentages, prettified names)
+interface ResultModel {
+  crop: string;
+  confidence: number; // percent
+  topCrops: Array<{ name: string; prob: number }>;
+  explanation: string;
+  shapFeatures: Array<{ feature: string; value: number; positive: boolean }>;
+}
+
+const initialResult: ResultModel = {
+  crop: "",
+  confidence: 0,
+  topCrops: [],
+  explanation: "",
+  shapFeatures: [],
 };
+// -----------------------------------------------------------------------------
+
 
 const ResultPage = () => {
   const location = useLocation();
-  const _sensorData = location.state?.sensorData;
+  const sensorData = location.state?.sensorData as
+    | Record<string, number>
+    | undefined;
+
+  const [result, setResult] = useState<ResultModel>(initialResult);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const highlightBold = (text: string) => {
     return text.split(/(\*\*[^*]+\*\*)/).map((part, i) => {
@@ -42,7 +72,94 @@ const ResultPage = () => {
     });
   };
 
-  const maxAbsShap = Math.max(...mockResult.shapFeatures.map((f) => Math.abs(f.value)));
+  // convert API shap values to UI shape when response arrives
+
+  const mapApiToResult = (api: ApiPrediction): ResultModel => {
+    return {
+      crop: api.predicted_crop,
+      confidence: api.confidence * 100,
+      topCrops: api.top_3_probabilities.map((c) => ({
+        name: c.crop,
+        prob: parseFloat((c.probability * 100).toFixed(2)),
+      })),
+
+      explanation: api.explanation_text,
+      shapFeatures: api.shap_values.map((f) => ({
+        feature: f.display_name,
+        value: f.contribution,
+        positive: f.contribution > 0,
+      })),
+    };
+  };
+
+  // perform prediction on mount
+  useEffect(() => {
+    if (!sensorData) {
+      setError("No sensor data provided.");
+      return;
+    }
+
+    const payload: any = {
+      n: sensorData.nitrogen,
+      p: sensorData.phosphorus,
+      k: sensorData.potassium,
+      temperature: sensorData.temperature,
+      humidity: sensorData.humidity,
+      ph: sensorData.ph,
+      rainfall: sensorData.rainfall,
+    };
+
+    setLoading(true);
+    fetch(`/api/predict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`Server returned ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data: ApiPrediction) => {
+        setResult(mapApiToResult(data));
+      })
+      .catch((err) => {
+        console.error(err);
+        setError("Failed to fetch prediction, please try again.");
+      })
+      .finally(() => setLoading(false));
+  }, [sensorData]);
+
+  const maxAbsShap =
+    result.shapFeatures.length > 0
+      ? Math.max(...result.shapFeatures.map((f) => Math.abs(f.value)))
+      : 0;
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="text-destructive font-semibold">{error}</p>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="font-medium">Analyzing... please wait.</p>
+      </div>
+    );
+  }
+
+  // guard against missing result (e.g. user navigated directly)
+  if (!sensorData) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <p className="font-medium">No sensor data. Go back and run the analysis.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen pb-16 pt-28">
@@ -69,10 +186,10 @@ const ResultPage = () => {
                 className="glow-text flex items-center gap-3 font-display text-4xl font-bold text-foreground md:text-5xl"
               >
                 <Leaf className="h-8 w-8 text-accent" />
-                {mockResult.crop}
+                {result.crop}
               </motion.h1>
             </div>
-            <ConfidenceRing value={mockResult.confidence} label="Model Confidence" />
+            <ConfidenceRing value={result.confidence.toFixed(1)} label="Model Confidence" />
           </div>
         </motion.div>
 
@@ -87,7 +204,7 @@ const ResultPage = () => {
             Top Crop Probabilities
           </h2>
           <div className="space-y-3">
-            {mockResult.topCrops.map((crop, i) => (
+            {result.topCrops.map((crop, i) => (
               <ProbabilityBar key={crop.name} label={crop.name} value={crop.prob} rank={i} />
             ))}
           </div>
@@ -110,7 +227,7 @@ const ResultPage = () => {
               </h2>
             </div>
             <p className="leading-relaxed text-muted-foreground">
-              {highlightBold(mockResult.explanation)}
+              {highlightBold(result.explanation)}
             </p>
           </motion.div>
 
@@ -125,7 +242,7 @@ const ResultPage = () => {
               Feature Contribution (SHAP)
             </h2>
             <div className="space-y-3">
-              {mockResult.shapFeatures
+              {result.shapFeatures
                 .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
                 .map((f, i) => (
                   <motion.div
